@@ -1,0 +1,124 @@
+name: Mirror kubectl (DHI)
+
+# Mirrors the Docker Hardened Image (DHI) of kubectl
+# to ghcr.io/nirmata/kubectl.
+#
+# Source: dhi.io/kubectl:<version>   (e.g., 1.33)
+# Target: ghcr.io/nirmata/kubectl:<version>
+#
+# The DHI kubectl image is:
+#   - Free (CIS-compliant, zero CVEs)
+#   - Multi-arch (linux/amd64 + linux/arm64)
+#   - Runs as nonroot
+#   - Minimal — contains only the kubectl binary
+#
+# Current process (nirmata/kubectl repo):
+#   - Builds from alpine:3.21, downloads kubectl binary, pushes to ghcr.io/nirmata/kubectl
+#   - Supports amd64, arm64, ppc64le, s390x, arm/v7
+#   - Includes bash shell, runs as user kubectl (1000:1000)
+#
+# DHI replaces this with a hardened, zero-CVE image (no custom Dockerfile needed).
+# DHI supports tags like: 1.35, 1.35.0, 1.35-debian13, 1.35.0-debian13
+# Best free CIS variant: 1.35.0-debian13 (nonroot, no shell, no pkg manager, zero CVEs)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kubectl_version:
+        description: 'DHI kubectl version tag (e.g., 1.35, 1.35.0, 1.35.0-debian13)'
+        required: true
+        type: string
+      push:
+        description: 'Push image to GHCR'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  SOURCE_REGISTRY: dhi.io
+  SOURCE_IMAGE: kubectl
+  TARGET_REGISTRY: ghcr.io/nirmata
+  TARGET_IMAGE: kubectl
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate input version
+        run: |
+          VERSION="${{ inputs.kubectl_version }}"
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+ ]]; then
+            echo "::error::Version must start with X.Y (e.g., 1.35, 1.35.0, 1.35.0-debian13)"
+            exit 1
+          fi
+          echo "SOURCE_TAG=${VERSION}" >> $GITHUB_ENV
+          echo "NIRMATA_TAG=${VERSION}" >> $GITHUB_ENV
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to DHI registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.SOURCE_REGISTRY }}
+          username: ${{ secrets.DHI_USERNAME }}
+          password: ${{ secrets.DHI_PASSWORD }}
+
+      - name: Log in to GHCR
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Inspect source image
+        run: |
+          SOURCE="${{ env.SOURCE_REGISTRY }}/${{ env.SOURCE_IMAGE }}:${{ env.SOURCE_TAG }}"
+          echo "## Source Image" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${SOURCE}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Inspecting source image: ${SOURCE}"
+          docker buildx imagetools inspect "${SOURCE}"
+
+      - name: Mirror multi-arch image to GHCR
+        if: ${{ inputs.push }}
+        run: |
+          SOURCE="${{ env.SOURCE_REGISTRY }}/${{ env.SOURCE_IMAGE }}:${{ env.SOURCE_TAG }}"
+          TARGET="${{ env.TARGET_REGISTRY }}/${{ env.TARGET_IMAGE }}:${{ env.NIRMATA_TAG }}"
+
+          echo "Mirroring: ${SOURCE} -> ${TARGET}"
+          docker buildx imagetools create \
+            --tag "${TARGET}" \
+            "${SOURCE}"
+
+      - name: Verify mirrored image
+        if: ${{ inputs.push }}
+        run: |
+          TARGET="${{ env.TARGET_REGISTRY }}/${{ env.TARGET_IMAGE }}:${{ env.NIRMATA_TAG }}"
+          echo "Verifying mirrored image: ${TARGET}"
+          docker buildx imagetools inspect "${TARGET}"
+
+      - name: Summary
+        run: |
+          echo "## Mirror Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Source** | \`${{ env.SOURCE_REGISTRY }}/${{ env.SOURCE_IMAGE }}:${{ env.SOURCE_TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Target** | \`${{ env.TARGET_REGISTRY }}/${{ env.TARGET_IMAGE }}:${{ env.NIRMATA_TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **kubectl Version** | ${{ inputs.kubectl_version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Architectures** | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Pushed** | ${{ inputs.push }} |" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ inputs.push }}" == "true" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Pull Command" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.TARGET_REGISTRY }}/${{ env.TARGET_IMAGE }}:${{ env.NIRMATA_TAG }}" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
