@@ -77,7 +77,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.DEPLOYMENT_PAT }}
+          password: ${{ secrets.ORG_DEPLOY_PAT }}
 
       - name: Inspect source image
         run: |
