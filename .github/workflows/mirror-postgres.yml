@@ -1,0 +1,113 @@
+name: Mirror PostgreSQL (DHI)
+
+# Mirrors the Docker Hardened Image (DHI) of PostgreSQL
+# to ghcr.io/nirmata/postgres.
+#
+# Source: dhi.io/postgres:<source_version>   (e.g., 18)
+# Target: ghcr.io/nirmata/postgres:<target_tag>   (e.g., 18.2)
+#
+# Example: mirror dhi.io/postgres:18 as ghcr.io/nirmata/postgres:18.2
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_version:
+        description: 'Source tag from DHI (e.g., 18)'
+        required: true
+        type: string
+      target_tag:
+        description: 'Target tag for GHCR (e.g., 18.2)'
+        required: true
+        type: string
+      push:
+        description: 'Push image to GHCR'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  SOURCE_REGISTRY: dhi.io
+  SOURCE_IMAGE: postgres
+  TARGET_REGISTRY: ghcr.io/nirmata
+  TARGET_IMAGE: postgres
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate inputs
+        run: |
+          SRC="${{ inputs.source_version }}"
+          TGT="${{ inputs.target_tag }}"
+          if [[ -z "${SRC}" || -z "${TGT}" ]]; then
+            echo "::error::source_version and target_tag are required"
+            exit 1
+          fi
+          echo "SOURCE_TAG=${SRC}" >> $GITHUB_ENV
+          echo "NIRMATA_TAG=${TGT}" >> $GITHUB_ENV
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to DHI registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.SOURCE_REGISTRY }}
+          username: ${{ secrets.DHI_USERNAME }}
+          password: ${{ secrets.DHI_PASSWORD }}
+
+      - name: Log in to GHCR
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.IMAGE_PUSH_PAT }}
+
+      - name: Inspect source image
+        run: |
+          SOURCE="${{ env.SOURCE_REGISTRY }}/${{ env.SOURCE_IMAGE }}:${{ env.SOURCE_TAG }}"
+          echo "## Source Image" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${SOURCE}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Inspecting source image: ${SOURCE}"
+          docker buildx imagetools inspect "${SOURCE}"
+
+      - name: Mirror multi-arch image to GHCR
+        if: ${{ inputs.push }}
+        run: |
+          SOURCE="${{ env.SOURCE_REGISTRY }}/${{ env.SOURCE_IMAGE }}:${{ env.SOURCE_TAG }}"
+          TARGET="${{ env.TARGET_REGISTRY }}/${{ env.TARGET_IMAGE }}:${{ env.NIRMATA_TAG }}"
+
+          echo "Mirroring: ${SOURCE} -> ${TARGET}"
+          docker buildx imagetools create \
+            --tag "${TARGET}" \
+            "${SOURCE}"
+
+      - name: Verify mirrored image
+        if: ${{ inputs.push }}
+        run: |
+          TARGET="${{ env.TARGET_REGISTRY }}/${{ env.TARGET_IMAGE }}:${{ env.NIRMATA_TAG }}"
+          echo "Verifying mirrored image: ${TARGET}"
+          docker buildx imagetools inspect "${TARGET}"
+
+      - name: Summary
+        run: |
+          echo "## Mirror Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Source** | \`${{ env.SOURCE_REGISTRY }}/${{ env.SOURCE_IMAGE }}:${{ env.SOURCE_TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Target** | \`${{ env.TARGET_REGISTRY }}/${{ env.TARGET_IMAGE }}:${{ env.NIRMATA_TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Pushed** | ${{ inputs.push }} |" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ inputs.push }}" == "true" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Pull Command" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${{ env.TARGET_REGISTRY }}/${{ env.TARGET_IMAGE }}:${{ env.NIRMATA_TAG }}" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi
