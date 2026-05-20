@@ -1,8 +1,13 @@
 name: Mirror Image with Shell Support
 
-# Takes a minimal/distroless DHI image (no shell) and builds a new multi-arch
-# image that adds bash and sh by layering the source binary onto
-# debian:bookworm-slim — no extra packages installed on top.
+# Takes a minimal/distroless DHI image (no shell) and builds a scratch-based
+# multi-arch image containing only:
+#   - bash + sh (symlink to bash)
+#   - musl dynamic linker + libreadline + libncursesw  (bash's only 3 deps)
+#   - the source binary (statically linked — zero shared lib deps)
+#   - CA certificates (for TLS connections)
+#
+# Result: no OS, no package manager, no busybox — trivy sees only the binary.
 #
 # Source: dhi.io/<image>:<tag>
 # Target: ghcr.io/nirmata/<image>:<tag>
@@ -21,7 +26,7 @@ on:
         required: true
         type: string
       binary_path:
-        description: 'Absolute path of the binary inside the source image (e.g., /usr/bin/kubectl)'
+        description: 'Absolute path of the binary inside the source image (e.g., /usr/local/bin/kubectl)'
         required: true
         type: string
       target_tag:
@@ -37,10 +42,6 @@ on:
 env:
   SOURCE_REGISTRY: dhi.io
   TARGET_REGISTRY: ghcr.io/nirmata
-  # Alpine is used because the DHI kubectl binary is statically linked (no glibc dep).
-  # alpine:3.21 + bash = 19 packages, 0 CVEs vs debian:bookworm-slim's 88 packages, 121 CVEs.
-  # sh ships with Alpine via busybox; bash is the only added package.
-  SHELL_BASE: alpine:3.21
 
 permissions:
   contents: read
@@ -53,7 +54,7 @@ jobs:
       - name: Validate inputs
         run: |
           if [[ ! "${{ inputs.binary_path }}" =~ ^/[a-zA-Z0-9._/-]+$ ]]; then
-            echo "::error::binary_path must be an absolute path (e.g., /usr/bin/kubectl)"
+            echo "::error::binary_path must be an absolute path (e.g., /usr/local/bin/kubectl)"
             exit 1
           fi
           echo "FULL_SOURCE=${{ env.SOURCE_REGISTRY }}/${{ inputs.source_image }}:${{ inputs.source_tag }}" >> $GITHUB_ENV
@@ -89,13 +90,29 @@ jobs:
 
       - name: Generate Dockerfile
         run: |
-          # Only adds bash on top of Alpine (sh ships with Alpine via busybox).
-          # Works because the DHI kubectl binary is statically linked — no glibc dep.
           cat > Dockerfile <<EOF
           FROM ${FULL_SOURCE} AS source
-          FROM ${{ env.SHELL_BASE }}
-          RUN apk add --no-cache bash
+
+          # Pull bash and its exact shared library deps from Alpine.
+          # The binary itself is statically linked so only bash needs libs.
+          FROM alpine:3.21 AS shell-source
+          RUN apk add --no-cache bash && \\
+              set -e; \\
+              mkdir -p /rootfs/bin /rootfs/lib /rootfs/usr/lib \\
+                       /rootfs/usr/local/bin /rootfs/tmp /rootfs/etc; \\
+              chmod 1777 /rootfs/tmp; \\
+              cp /bin/bash /rootfs/bin/bash; \\
+              ln -sf bash /rootfs/bin/sh; \\
+              cp -a /lib/ld-musl-*.so.1       /rootfs/lib/; \\
+              cp -a /usr/lib/libreadline.so.8* /rootfs/usr/lib/; \\
+              cp -a /usr/lib/libncursesw.so.6* /rootfs/usr/lib/
+
+          FROM scratch
+          COPY --from=shell-source /rootfs/ /
           COPY --from=source ${{ inputs.binary_path }} ${{ inputs.binary_path }}
+          COPY --from=source /etc/ssl/  /etc/ssl/
+          COPY --from=source /etc/passwd /etc/passwd
+          COPY --from=source /etc/group  /etc/group
           EOF
 
           echo "Generated Dockerfile:"
@@ -129,6 +146,7 @@ jobs:
           echo "| **Source** | \`${FULL_SOURCE}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Target** | \`${FULL_TARGET}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Binary** | \`${{ inputs.binary_path }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Base** | scratch (bash + 3 libs only, no OS, no busybox) |" >> $GITHUB_STEP_SUMMARY
           echo "| **Architectures** | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
           echo "| **Pushed** | ${{ inputs.push }} |" >> $GITHUB_STEP_SUMMARY
           if [[ "${{ inputs.push }}" == "true" ]]; then
