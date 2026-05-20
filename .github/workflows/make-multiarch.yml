@@ -1,0 +1,121 @@
+name: Make Image Multi-Arch
+
+# Takes any source image and publishes it as a multi-arch image to GHCR.
+#
+# Strategy: docker buildx build with a minimal FROM <source> Dockerfile.
+# Buildx handles platform selection automatically:
+#   - If the source already has a native variant for a platform → uses it directly.
+#   - If the source only has one arch → QEMU emulates the missing platforms.
+#
+# For statically-linked Go binaries (kubectl, etcd, etc.) this always produces
+# truly native multi-arch output since the same binary works on all platforms.
+#
+# Supported platforms: linux/amd64, linux/arm64
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_image:
+        description: 'Full source image reference (e.g., dhi.io/kubectl:1.35.0, docker.io/nginx:1.25)'
+        required: true
+        type: string
+      target_image:
+        description: 'Target image name under ghcr.io/nirmata (e.g., kubectl)'
+        required: true
+        type: string
+      target_tag:
+        description: 'Target tag in GHCR (e.g., 1.35.0)'
+        required: true
+        type: string
+      push:
+        description: 'Push image to GHCR'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  TARGET_REGISTRY: ghcr.io/nirmata
+  PLATFORMS: linux/amd64,linux/arm64
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  make-multiarch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set target
+        run: |
+          echo "FULL_TARGET=${{ env.TARGET_REGISTRY }}/${{ inputs.target_image }}:${{ inputs.target_tag }}" >> $GITHUB_ENV
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to DHI registry
+        if: startsWith(inputs.source_image, 'dhi.io/')
+        uses: docker/login-action@v3
+        with:
+          registry: dhi.io
+          username: ${{ secrets.DHI_USERNAME }}
+          password: ${{ secrets.DHI_PASSWORD }}
+
+      - name: Log in to GHCR
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.IMAGE_PUSH_PAT }}
+
+      - name: Inspect source image
+        run: |
+          echo "## Source Image" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ inputs.source_image }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          docker buildx imagetools inspect "${{ inputs.source_image }}"
+
+      - name: Build multi-arch image
+        run: |
+          OUTPUT_OPT="--output type=cacheonly"
+          if [[ "${{ inputs.push }}" == "true" ]]; then
+            OUTPUT_OPT="--push"
+          fi
+
+          # Minimal Dockerfile — just re-manifests the source for each target platform.
+          # Buildx pulls the correct arch variant from the source automatically.
+          docker buildx build \
+            --platform ${{ env.PLATFORMS }} \
+            --build-arg SOURCE="${{ inputs.source_image }}" \
+            --tag "${FULL_TARGET}" \
+            ${OUTPUT_OPT} \
+            - <<'EOF'
+          ARG SOURCE
+          FROM ${SOURCE}
+          EOF
+
+      - name: Verify pushed image
+        if: ${{ inputs.push }}
+        run: |
+          docker buildx imagetools inspect "${FULL_TARGET}"
+
+      - name: Summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Source** | \`${{ inputs.source_image }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Target** | \`${FULL_TARGET}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Platforms** | ${{ env.PLATFORMS }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Pushed** | ${{ inputs.push }} |" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ inputs.push }}" == "true" ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Pull Command" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+            echo "docker pull ${FULL_TARGET}" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          fi

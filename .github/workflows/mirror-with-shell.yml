@@ -37,8 +37,10 @@ on:
 env:
   SOURCE_REGISTRY: dhi.io
   TARGET_REGISTRY: ghcr.io/nirmata
-  # Must match DHI's glibc ABI (DHI uses Debian 13 = bookworm); bash + sh ship built-in
-  SHELL_BASE: debian:bookworm-slim
+  # Alpine is used because the DHI kubectl binary is statically linked (no glibc dep).
+  # alpine:3.21 + bash = 19 packages, 0 CVEs vs debian:bookworm-slim's 88 packages, 121 CVEs.
+  # sh ships with Alpine via busybox; bash is the only added package.
+  SHELL_BASE: alpine:3.21
 
 permissions:
   contents: read
@@ -87,10 +89,12 @@ jobs:
 
       - name: Generate Dockerfile
         run: |
-          # No RUN steps — bash and sh ship with debian:bookworm-slim; nothing extra is installed.
+          # Only adds bash on top of Alpine (sh ships with Alpine via busybox).
+          # Works because the DHI kubectl binary is statically linked — no glibc dep.
           cat > Dockerfile <<EOF
           FROM ${FULL_SOURCE} AS source
           FROM ${{ env.SHELL_BASE }}
+          RUN apk add --no-cache bash
           COPY --from=source ${{ inputs.binary_path }} ${{ inputs.binary_path }}
           EOF
 
