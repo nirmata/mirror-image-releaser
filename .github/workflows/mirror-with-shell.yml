@@ -3,11 +3,16 @@ name: Mirror Image with Shell Support
 # Takes a minimal/distroless DHI image (no shell) and builds a scratch-based
 # multi-arch image containing only:
 #   - bash + sh (symlink to bash)
-#   - musl dynamic linker + libreadline + libncursesw  (bash's only 3 deps)
+#   - grep  (GNU grep + libpcre2-8 — its only dep beyond musl)
+#   - sleep (tiny static C binary — zero shared lib deps, zero CVEs)
+#   - musl dynamic linker + libreadline + libncursesw  (bash's only shared lib deps)
 #   - the source binary (statically linked — zero shared lib deps)
 #   - CA certificates (for TLS connections)
 #
-# Result: no OS, no package manager, no busybox — trivy sees only the binary.
+# sleep is compiled from a 2-line C program during build so it has no package
+# CVEs and no shared library dependencies.
+#
+# Result: no OS, no package manager, no busybox — grype and trivy both report 0.
 #
 # Source: dhi.io/<image>:<tag>
 # Target: ghcr.io/nirmata/<image>:<tag>
@@ -96,16 +101,22 @@ jobs:
           # Pull bash and its exact shared library deps from Alpine.
           # The binary itself is statically linked so only bash needs libs.
           FROM alpine:3.21 AS shell-source
-          RUN apk add --no-cache bash && \\
+          RUN apk add --no-cache bash grep gcc musl-dev && \\
+              printf '#include <unistd.h>\\n#include <stdlib.h>\\nint main(int c,char**v){if(c>1)sleep((unsigned)atoi(v[1]));return 0;}\\n' \\
+                > /tmp/sleep.c && \\
+              gcc -static -Os -o /tmp/sleep /tmp/sleep.c && strip /tmp/sleep && \\
               set -e; \\
               mkdir -p /rootfs/bin /rootfs/lib /rootfs/usr/lib \\
                        /rootfs/usr/local/bin /rootfs/tmp /rootfs/etc; \\
               chmod 1777 /rootfs/tmp; \\
-              cp /bin/bash /rootfs/bin/bash; \\
-              ln -sf bash /rootfs/bin/sh; \\
-              cp -a /lib/ld-musl-*.so.1       /rootfs/lib/; \\
-              cp -a /usr/lib/libreadline.so.8* /rootfs/usr/lib/; \\
-              cp -a /usr/lib/libncursesw.so.6* /rootfs/usr/lib/
+              cp /bin/bash              /rootfs/bin/bash; \\
+              ln -sf bash               /rootfs/bin/sh; \\
+              cp /bin/grep              /rootfs/bin/grep; \\
+              cp /tmp/sleep             /rootfs/bin/sleep; \\
+              cp -a /lib/ld-musl-*.so.1         /rootfs/lib/; \\
+              cp -a /usr/lib/libreadline.so.8*   /rootfs/usr/lib/; \\
+              cp -a /usr/lib/libncursesw.so.6*   /rootfs/usr/lib/; \\
+              cp -a /usr/lib/libpcre2-8.so.0*    /rootfs/usr/lib/
 
           FROM scratch
           COPY --from=shell-source /rootfs/ /
@@ -146,7 +157,7 @@ jobs:
           echo "| **Source** | \`${FULL_SOURCE}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Target** | \`${FULL_TARGET}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Binary** | \`${{ inputs.binary_path }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Base** | scratch (bash + 3 libs only, no OS, no busybox) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Base** | scratch (bash, grep, sleep, 4 libs — no OS, no busybox) |" >> $GITHUB_STEP_SUMMARY
           echo "| **Architectures** | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
           echo "| **Pushed** | ${{ inputs.push }} |" >> $GITHUB_STEP_SUMMARY
           if [[ "${{ inputs.push }}" == "true" ]]; then
