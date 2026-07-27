@@ -14,6 +14,7 @@ DHI images are CIS-compliant, zero-CVE, multi-arch (`linux/amd64` + `linux/arm64
 | **PostgreSQL** | `mirror-postgres.yml` | `dhi.io/postgres:<ver>` | `ghcr.io/nirmata/postgres:<ver>` | Minor (e.g., `18.2`) |
 | **CloudNativePG** | `mirror-cloudnative-pg.yml` | `dhi.io/cloudnative-pg:<ver>-debian13` | `ghcr.io/nirmata/cloudnative-pg:<ver>-dhi<n>` | Patch (e.g., `1.30.0`) |
 | **CNPG Barman Cloud Plugin** | `mirror-barman-cloud-plugin.yml` | `dhi.io/cloudnative-pg-plugin-barman-cloud:<ver>-debian13` | `ghcr.io/nirmata/plugin-barman-cloud:<ver>-dhi<n>` | Patch (e.g., `0.13.0`) |
+| **CNPG Barman Cloud Plugin Sidecar** | `mirror-barman-cloud-sidecar.yml` | `dhi.io/cloudnative-pg-plugin-barman-cloud-sidecar:<ver>-debian13` | `ghcr.io/nirmata/plugin-barman-cloud-sidecar:<ver>-dhi<n>` | Patch (e.g., `0.13.0`) |
 
 ## Usage
 
@@ -64,6 +65,15 @@ Actions → Mirror CloudNativePG Barman Cloud Plugin (DHI) → Run workflow
   target_tag: 0.13.0-dhi1
   push: true
 → ghcr.io/nirmata/plugin-barman-cloud:0.13.0-dhi1
+```
+
+**CNPG Barman Cloud Plugin Sidecar:**
+```
+Actions → Mirror CloudNativePG Barman Cloud Plugin Sidecar (DHI) → Run workflow
+  source_version: 0.13.0-debian13
+  target_tag: 0.13.0-dhi1
+  push: true
+→ ghcr.io/nirmata/plugin-barman-cloud-sidecar:0.13.0-dhi1
 ```
 
 ## What this replaces
