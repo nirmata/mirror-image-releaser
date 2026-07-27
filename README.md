@@ -11,6 +11,9 @@ DHI images are CIS-compliant, zero-CVE, multi-arch (`linux/amd64` + `linux/arm64
 | **OTel Collector** | `mirror-otel-collector.yml` | `dhi.io/opentelemetry-collector:<ver>-contrib` | `ghcr.io/nirmata/otel-collector:nirmata-<ver>` | Patch (e.g., `0.145.0`) |
 | **kubectl** | `mirror-kubectl.yml` | `dhi.io/kubectl:<ver>` | `ghcr.io/nirmata/kubectl:<ver>` | Minor (e.g., `1.33`) |
 | **etcd** | `mirror-etcd.yml` | `dhi.io/etcd:<ver>` | `ghcr.io/nirmata/etcd:<ver>` | Minor (e.g., `3.5`) |
+| **PostgreSQL** | `mirror-postgres.yml` | `dhi.io/postgres:<ver>` | `ghcr.io/nirmata/postgres:<ver>` | Minor (e.g., `18.2`) |
+| **CloudNativePG** | `mirror-cloudnative-pg.yml` | `dhi.io/cloudnative-pg:<ver>-debian13` | `ghcr.io/nirmata/cloudnative-pg:<ver>-dhi<n>` | Patch (e.g., `1.30.0`) |
+| **CNPG Barman Cloud Plugin** | `mirror-barman-cloud-plugin.yml` | `dhi.io/cloudnative-pg-plugin-barman-cloud:<ver>-debian13` | `ghcr.io/nirmata/plugin-barman-cloud:<ver>-dhi<n>` | Patch (e.g., `0.13.0`) |
 
 ## Usage
 
@@ -43,6 +46,24 @@ Actions → Mirror etcd (DHI) → Run workflow
   etcd_version: 3.5
   push: true
 → ghcr.io/nirmata/etcd:3.5
+```
+
+**CloudNativePG:**
+```
+Actions → Mirror CloudNativePG (DHI) → Run workflow
+  source_version: 1.30.0-debian13
+  target_tag: 1.30.0-dhi1
+  push: true
+→ ghcr.io/nirmata/cloudnative-pg:1.30.0-dhi1
+```
+
+**CNPG Barman Cloud Plugin:**
+```
+Actions → Mirror CloudNativePG Barman Cloud Plugin (DHI) → Run workflow
+  source_version: 0.13.0-debian13
+  target_tag: 0.13.0-dhi1
+  push: true
+→ ghcr.io/nirmata/plugin-barman-cloud:0.13.0-dhi1
 ```
 
 ## What this replaces
